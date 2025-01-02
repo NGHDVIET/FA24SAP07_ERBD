@@ -1,0 +1,186 @@
+Source code:
+----------------------------------------------------------------------------------------------------------------
+ENHANCEMENT 1  Z_FETCH_EXCHANGE_RATE.    "active version
+* Get exchange rate from OB08 based on billing date before screen appears
+*IF sy-uname = 'DEV-216' OR sy-uname = 'DEV-215' OR
+*   sy-uname = 'LEARN-214' OR sy-uname = 'LEARN-215' OR sy-uname = 'LEARN-201'.
+
+" Only processed when exchange rate type is ZM1 or ZM2
+IF vbrk-kurst = 'ZM1' OR vbrk-kurst = 'ZM2'.
+
+  " Declare a variable to store the exchange rate
+  DATA: lv_exchange_rate TYPE vbrk-kurrf.
+
+  " Call the function module READ_EXCHANGE_RATE to fetch the exchange rate
+  CALL FUNCTION 'READ_EXCHANGE_RATE'
+    EXPORTING
+      DATE             = vbrk-fkdat
+      FOREIGN_CURRENCY = vbrk-waerk
+      LOCAL_CURRENCY   = t001-waers
+      TYPE_OF_RATE     = vbrk-kurst
+    IMPORTING
+      EXCHANGE_RATE    = lv_exchange_rate
+    EXCEPTIONS
+      NO_RATE_FOUND    = 1
+      OTHERS           = 2.
+
+  " Handle the case where no exchange rate is found
+  IF sy-subrc NE 0.
+    MESSAGE e003(ZMY_MESSAGES_DEV_216) WITH vbrk-waerk t001-waers vbrk-fkdat.
+  ELSE.
+    " Update the exchange rate field if a valid exchange rate is found
+    vbrk-kurrf = lv_exchange_rate.
+  ENDIF.
+
+ENDIF.
+ENDENHANCEMENT.
+
+
+------------------------------------------------------------------------------------------------------------------
+
+ENHANCEMENT 1  Z_SET_FIELD_EDITABLE.    "active version
+* Set editable for field VBRK-KURRF
+*IF sy-uname = 'DEV-216' OR sy-uname = 'DEV-215' OR
+*   sy-uname = 'LEARN-214' OR sy-uname = 'LEARN-215' OR sy-uname = 'LEARN-201'.
+
+  IF ( sy-tcode = 'VF01' OR sy-tcode = 'VF02' ) AND
+   screen-name EQ 'VBRK-KURRF' AND
+   ( vbrk-kurst = 'ZM1' OR vbrk-kurst = 'ZM2' ).
+    " Check additional condition if transaction code is VF02
+    IF sy-tcode = 'VF02' AND ( vbrk-rfbsk = 'C' OR vbrk-rfbsk = 'H' ).
+      " Billing document has already posted to FI, so do not allow editing
+      screen-input = 0. " Disable input mode for VBRK-KURRF
+    ELSE.
+      screen-input = 1. " Enable input mode for VBRK-KURRF
+    ENDIF.
+
+    MODIFY SCREEN.
+  ENDIF.
+*ENDIF.
+ENDENHANCEMENT.
+
+
+-------------------------------------------------------------------------------------------------------------------
+
+ENHANCEMENT 1  Z_BYPASS_KURRF.    "active version
+* Check if KURST has value 'ZM1' or 'ZM2' then ignore condition MESSAGE e001(bdr)
+  IF cv_head-kurst = 'ZM1' OR cv_head-kurst = 'ZM2'.
+    RETURN. " Ignore the error message and end the check
+  ENDIF.
+ENDENHANCEMENT.
+
+
+--------------------------------------------------------------------------------------------------------------------
+
+ENHANCEMENT 1  Z_UPDATE_EXCHANGE_RATE_BILL.    "active version
+* Update exchange rates when billing date changes
+DATA: lv_initial_fkdat TYPE vbrk-fkdat,
+      lv_initial_kurrf TYPE vbrk-kurrf,
+      lv_exchange_rate TYPE vbrk-kurrf,
+      lv_is_manual_change TYPE abap_bool VALUE abap_false,
+      lv_block_action TYPE I VALUE 0.
+
+" Save the initial value in a variable before calling the function
+lv_initial_fkdat = xvbrk-fkdat.
+lv_initial_kurrf = xvbrk-kurrf.
+lv_exchange_rate = xvbrk-kurrf.
+
+          CALL FUNCTION 'RV_INVOICE_HEAD_MAINTAIN'
+            EXPORTING
+              vbrk_i  = vbrk
+              fcode_i = da_fcode
+            TABLES
+              xkomfk  = xkomfk
+              xthead  = xthead
+              xvbfs   = xvbfs
+              xvbss   = xvbss
+              xvbrk   = xvbrk
+              xvbrp   = xvbrp
+              xvbpa   = xvbpa
+              xkomv   = xkomv.
+
+*IF sy-uname = 'DEV-216' OR sy-uname = 'DEV-215' OR
+*   sy-uname = 'LEARN-214' OR sy-uname = 'LEARN-215' OR sy-uname = 'LEARN-201'.
+
+" Only processed when exchange rate type is ZM1 or ZM2
+IF vbrk-kurst = 'ZM1' OR vbrk-kurst = 'ZM2'.
+
+  IF da_fcode = 'FKFR' AND fcode = 'SICH'.
+    RETURN. " Exit ENHANCEMENT when posting bill
+  ENDIF.
+
+  " Check if the exchange rate was changed manually
+  IF lv_initial_kurrf NE vbrk-kurrf AND NOT vbrk-kurrf IS INITIAL.
+    IF lv_initial_fkdat NE vbrk-fkdat.
+      lv_is_manual_change = abap_false.
+    ELSE.
+      lv_is_manual_change = abap_true.
+      MESSAGE i004(ZMY_MESSAGES_DEV_216).
+    ENDIF.
+  ENDIF.
+
+    " Check if the da_fcode = SICH before showing the message
+    IF da_fcode = 'SICH'.
+      CALL FUNCTION 'READ_EXCHANGE_RATE'
+        EXPORTING
+          DATE             = vbrk-fkdat
+          FOREIGN_CURRENCY = vbrk-waerk
+          LOCAL_CURRENCY   = t001-waers
+          TYPE_OF_RATE     = vbrk-kurst
+        IMPORTING
+          EXCHANGE_RATE    = lv_exchange_rate
+        EXCEPTIONS
+          NO_RATE_FOUND    = 1
+          OTHERS           = 2.
+      IF SY-SUBRC = 0.
+        IF lv_is_manual_change = abap_false.
+          MESSAGE i002(ZMY_MESSAGES_DEV_216).
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    " If exchange rate was not manually changed, allow re-determination
+    IF lv_is_manual_change = abap_false.
+      CALL FUNCTION 'READ_EXCHANGE_RATE'
+        EXPORTING
+          DATE             = vbrk-fkdat
+          FOREIGN_CURRENCY = vbrk-waerk
+          LOCAL_CURRENCY   = t001-waers
+          TYPE_OF_RATE     = vbrk-kurst
+        IMPORTING
+          EXCHANGE_RATE    = lv_exchange_rate
+        EXCEPTIONS
+          NO_RATE_FOUND    = 1
+          OTHERS           = 2.
+      IF SY-SUBRC NE 0. " No exchange rate found
+        XVBRK-FKDAT = lv_initial_fkdat.
+        XVBRK-KURRF = lv_initial_kurrf.
+        lv_exchange_rate = VBRK-KURRF.
+        MODIFY xvbrk INDEX 1.
+        " Set blog action flag
+        lv_block_action = 1.
+        MESSAGE w003(ZMY_MESSAGES_DEV_216) WITH vbrk-waerk t001-waers vbrk-fkdat DISPLAY LIKE 'E'.
+      ENDIF.
+
+      " Update exchange rate
+      IF lv_exchange_rate NE XVBRK-KURRF.
+        XVBRK-KURRF = lv_exchange_rate.
+        IF XVBRK-KURRF IS INITIAL.
+          XVBRK-KURRF = lv_initial_kurrf.
+        ENDIF.
+        MODIFY xvbrk INDEX 1.
+        MESSAGE s001(ZMY_MESSAGES_DEV_216).
+        IF vbrk-kurrf NE xvbrk-kurrf.
+          MESSAGE s085 WITH vbrk-kurrf xvbrk-kurrf.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+  " Check if block action is triggered and user presses SAVE or BACK
+  IF lv_block_action = 1 AND ( da_fcode = 'SICH' OR da_fcode = 'BACK' OR da_fcode = 'TNAV' ).
+    MESSAGE e003(ZMY_MESSAGES_DEV_216) WITH vbrk-waerk t001-waers vbrk-fkdat.
+    RETURN.
+  ENDIF.
+
+ENDIF.
+ENDENHANCEMENT.
